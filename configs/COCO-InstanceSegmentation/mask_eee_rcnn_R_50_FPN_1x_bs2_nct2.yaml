@@ -1,0 +1,18 @@
+_BASE_: "../Base-RCNN-FPN.yaml"
+MODEL:
+  WEIGHTS: "detectron2://ImageNetPretrained/MSRA/R-50.pkl"
+  MASK_ON: True
+  MASKIOU_ON: False
+  MASK_EEE_ON: True
+  ROI_MASK_EEE_HEAD:
+    NUM_CONV_SHARED: 3
+    NUM_CONV_TARGET: 2
+    TARGETS: ["TP", "FP", "FN"]
+
+SOLVER:
+  IMS_PER_BATCH: 2
+  BASE_LR: 0.0025
+  STEPS: (60000, 80000)
+  MAX_ITER: 90000
+  CHECKPOINT_PERIOD: 1000
+
