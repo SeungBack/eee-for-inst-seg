@@ -592,9 +592,9 @@ class StandardROIHeads(ROIHeads):
                 losses.update(loss)
                 losses.update(self._forward_maskiou(mask_features, proposals, selected_mask, labels, maskiou_targets))
             elif self.mask_eee_on:
-                loss, mask_features, selected_mask, true_positive_mask, false_positive_mask, false_negative_mask = self._forward_mask(features_list, proposals)
+                loss, mask_features, selected_mask, tp_mask, tn_mask, fp_mask, fn_mask  = self._forward_mask(features_list, proposals)
                 losses.update(loss)
-                losses.update(self._forward_mask_eee(mask_features, proposals, selected_mask, true_positive_mask, false_positive_mask, false_negative_mask))
+                losses.update(self._forward_mask_eee(mask_features, proposals, selected_mask, tp_mask, tn_mask, fp_mask, fn_mask))
             else:
                 losses.update(self._forward_mask(features_list, proposals))
             
@@ -706,8 +706,8 @@ class StandardROIHeads(ROIHeads):
                 loss, selected_mask, labels, maskiou_targets = mask_rcnn_loss(mask_logits, proposals, self.maskiou_on)
                 return {"loss_mask": loss}, mask_features, selected_mask, labels, maskiou_targets
             if self.mask_eee_on:
-                loss, selected_mask, true_positive_mask, false_positive_mask, false_negative_mask = mask_rcnn_loss(mask_logits, proposals, self.maskiou_on, self.mask_eee_on)
-                return {"loss_mask": loss}, mask_features, selected_mask, true_positive_mask, false_positive_mask, false_negative_mask
+                loss, selected_mask, tp_mask, tn_mask, fp_mask, fn_mask = mask_rcnn_loss(mask_logits, proposals, self.maskiou_on, self.mask_eee_on)
+                return {"loss_mask": loss}, mask_features, selected_mask, tp_mask, tn_mask, fp_mask, fn_mask
             else:
                 return {"loss_mask": mask_rcnn_loss(mask_logits, proposals, self.maskiou_on)}, None, None, None, None
 
@@ -751,14 +751,16 @@ class StandardROIHeads(ROIHeads):
             mask_iou_inference(instances, pred_maskiou)
             return instances
 
-    def _forward_mask_eee(self, mask_features, instances, selected_mask=None, true_positive_mask=None, false_positive_mask=None, false_negative_mask=None):
+    def _forward_mask_eee(self, mask_features, instances, selected_mask=None, \
+                                true_positive_mask=None, true_negative_mask=None, \
+                                    false_positive_mask=None, false_negative_mask=None):
 
         if not self.mask_eee_on:
             return {} if self.training else instances
 
         if self.training:
             pred_mask_eee = self.mask_eee_head(mask_features, selected_mask)
-            return mask_eee_loss(pred_mask_eee, true_positive_mask, false_positive_mask, false_negative_mask, self.mask_eee_weight)
+            return mask_eee_loss(pred_mask_eee, true_positive_mask, true_negative_mask, false_positive_mask, false_negative_mask, self.mask_eee_weight)
         else:
             masks = torch.cat([i.pred_masks for i in instances], 0)
             if masks.shape[0] == 0:

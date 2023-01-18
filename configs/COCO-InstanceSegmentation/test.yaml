@@ -1,0 +1,22 @@
+_BASE_: "../Base-RCNN-FPN.yaml"
+MODEL:
+  WEIGHTS: "detectron2://ImageNetPretrained/MSRA/R-50.pkl"
+  MASK_ON: True
+  MASKIOU_ON: True
+  MASK_EEE_ON: False
+  ROI_MASK_EEE_HEAD:
+    NUM_CONV: 3
+    CONV_DIM: 256
+    MAXPOOL_ON: False
+
+SOLVER:
+  IMS_PER_BATCH: 2
+  BASE_LR: 0.0025
+  STEPS: (180000, 240000)
+  MAX_ITER: 270000
+  CHECKPOINT_PERIOD: 90000
+TEST:
+  EVAL_PERIOD: 10
+DATASETS:
+  TRAIN: ("coco_2017_val",)
+  TEST: ("coco_2017_val",)

@@ -4,12 +4,7 @@ Version: 0.1
 Summary: mask_eee_rcnn is FAIR's next-generation research platform for object detection and segmentation.
 Home-page: https://github.com/facebookresearch/mask_eee_rcnn
 Author: FAIR
-License: UNKNOWN
-Platform: UNKNOWN
 Requires-Python: >=3.6
 Provides-Extra: all
 Provides-Extra: dev
 License-File: LICENSE
-
-UNKNOWN
-

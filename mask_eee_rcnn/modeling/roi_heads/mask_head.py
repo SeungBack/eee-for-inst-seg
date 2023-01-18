@@ -63,7 +63,6 @@ def mask_rcnn_loss(pred_mask_logits, instances, maskiou_on, mask_eee_on=False):
                 (cropped_mask / instances_per_image.gt_masks.area())
                 .to(device=pred_mask_logits.device).clamp(min=0., max=1.)
             )
-        
 
         gt_masks_per_image = instances_per_image.gt_masks.crop_and_resize(
             instances_per_image.proposal_boxes.tensor, mask_side_len
@@ -80,6 +79,8 @@ def mask_rcnn_loss(pred_mask_logits, instances, maskiou_on, mask_eee_on=False):
             mask_num, mask_h, mask_w = selected_mask.shape
             selected_mask = selected_mask.reshape(mask_num, 1, mask_h, mask_w)
             return pred_mask_logits.sum() * 0, selected_mask, gt_classes, None
+        elif mask_eee_on:
+            pass
         else:
             return pred_mask_logits.sum() * 0
 
@@ -90,16 +91,17 @@ def mask_rcnn_loss(pred_mask_logits, instances, maskiou_on, mask_eee_on=False):
         indices = torch.arange(total_num_masks)
         # gt_classes = cat(gt_classes, dim=0)
         pred_mask_logits = pred_mask_logits[indices, gt_classes]
-
+    pred_mask_bool = pred_mask_logits > 0
     if len(gt_masks) == 0:
         if mask_eee_on:
-            gt_mask_bool = torch.zeros_like(pred_mask_logits)
-            mask_incorrect = (pred_mask_logits > 0.0) != gt_mask_bool
-            true_positive_mask = ~mask_incorrect & gt_masks_bool
-            false_positive_mask = mask_incorrect & ~gt_masks_bool
-            false_negative_mask = mask_incorrect & gt_masks_bool
+            print('no gt mask')
+            gt_masks_bool = torch.zeros_like(pred_mask_bool)
+            true_positive_mask =  gt_masks_bool & pred_mask_bool
+            true_negative_mask = gt_masks_bool & ~pred_mask_bool
+            false_positive_mask = ~gt_masks_bool & pred_mask_bool
+            false_negative_mask = ~gt_masks_bool & ~pred_mask_bool
             selected_mask = pred_mask_logits.reshape(-1, 1, mask_side_len, mask_side_len)
-            return pred_mask_logits.sum() * 0, selected_mask, true_positive_mask, false_positive_mask, false_negative_mask
+            return pred_mask_logits.sum() * 0, selected_mask, true_positive_mask, true_negative_mask, false_positive_mask, false_negative_mask
     
     gt_masks = cat(gt_masks, dim=0)
     if gt_masks.dtype == torch.bool:
@@ -112,15 +114,10 @@ def mask_rcnn_loss(pred_mask_logits, instances, maskiou_on, mask_eee_on=False):
     mask_incorrect = (pred_mask_logits > 0.0) != gt_masks_bool
     mask_accuracy = 1 - (mask_incorrect.sum().item() / max(mask_incorrect.numel(), 1.0))
     num_positive = gt_masks_bool.sum().item()
-
-    true_positive_mask = ~mask_incorrect & gt_masks_bool
-    false_positive_mask = mask_incorrect & ~gt_masks_bool
-    false_negative_mask = mask_incorrect & gt_masks_bool
-
-    false_positive = false_positive_mask.sum().item() / max(
+    false_positive = (mask_incorrect & ~gt_masks_bool).sum().item() / max(
         gt_masks_bool.numel() - num_positive, 1.0
     )
-    false_negative = false_negative_mask.sum().item() / max(num_positive, 1.0)
+    false_negative = (mask_incorrect & gt_masks_bool).sum().item() / max(num_positive, 1.0)
 
     storage = get_event_storage()
     storage.put_scalar("mask_rcnn/accuracy", mask_accuracy)
@@ -131,6 +128,15 @@ def mask_rcnn_loss(pred_mask_logits, instances, maskiou_on, mask_eee_on=False):
         pred_mask_logits, gt_masks.to(dtype=torch.float32), reduction="mean"
     )
     
+    # import cv2
+    # import numpy as np
+    # n_masks = pred_mask_bool.shape[0]
+    # for i in range(n_masks):
+    #     vis = pred_mask_bool[i].cpu().numpy().astype(np.uint8)
+    #     vis = np.stack([vis, vis, vis], axis=2)
+    #     vis = vis * 255
+    #     cv2.imwrite('{}_pred.png'.format(i), vis)
+
     if maskiou_on:
         mask_ratios = cat(mask_ratios, dim=0)
         value_eps = 1e-10 * torch.ones(gt_masks.shape[0], device=gt_classes.device)
@@ -155,9 +161,13 @@ def mask_rcnn_loss(pred_mask_logits, instances, maskiou_on, mask_eee_on=False):
         
         return mask_loss, selected_mask, gt_classes, maskiou_targets.detach()
     elif mask_eee_on:
+        true_positive_mask = gt_masks_bool & pred_mask_bool
+        true_negative_mask = gt_masks_bool & ~pred_mask_bool
+        false_positive_mask = ~gt_masks_bool & pred_mask_bool
+        false_negative_mask = ~gt_masks_bool & ~pred_mask_bool
         mask_num, mask_h, mask_w = pred_mask_logits.shape
         selected_mask = pred_mask_logits.reshape(mask_num, 1, mask_h, mask_w)
-        return mask_loss, selected_mask, true_positive_mask, false_positive_mask, false_negative_mask
+        return mask_loss, selected_mask, true_positive_mask, true_negative_mask, false_positive_mask, false_negative_mask
 
     else:
         return mask_loss
