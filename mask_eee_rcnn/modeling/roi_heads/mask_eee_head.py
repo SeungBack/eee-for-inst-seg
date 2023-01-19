@@ -16,8 +16,10 @@ Registry for maskiou heads, which predicts predicted mask iou.
 The registered object will be called with `obj(cfg, input_shape)`.
 """
 
+from monai.losses import *
 
-def mask_eee_loss(pred_mask_eee, true_positive_mask, true_negative_mask, false_positive_mask, false_negative_mask, loss_weight):
+
+def mask_eee_loss(pred_mask_eee, true_positive_mask, true_negative_mask, false_positive_mask, false_negative_mask, loss_weight, loss_type):
     """
     Compute the maskiou loss.
 
@@ -32,11 +34,21 @@ def mask_eee_loss(pred_mask_eee, true_positive_mask, true_negative_mask, false_p
             false_positive_mask.unsqueeze(1),
             false_negative_mask.unsqueeze(1),
         ], dim=1).to(dtype=torch.float) # [N, 4, H, W]
-    gt_mask = torch.argmax(gt_mask, dim=1).to(dtype=torch.long) # [N, 4, H, W] = to [N, H, W]
-    loss = F.cross_entropy(
-            pred_mask_eee, 
-            gt_mask,
-            reduction='mean')
+    if loss_type == 'cross_entropy':
+        gt_mask = torch.argmax(gt_mask, dim=1).to(dtype=torch.long) # [N, 4, H, W] = to [N, H, W]
+        loss = F.cross_entropy(
+                pred_mask_eee, 
+                gt_mask,
+                reduction='mean')
+    elif loss_type == 'dice':
+        criterion = DiceLoss(reduction='mean', softmax=True)
+        loss = criterion(pred_mask_eee, gt_mask)
+    elif loss_type == 'dice_focal':
+        criterion = DiceFocalLoss(reduction='mean', softmax=True)
+        loss = criterion(pred_mask_eee, gt_mask)
+    else:
+        raise NotImplementedError
+    
     # import cv2
     # import numpy as np
     # n_masks = pred_mask_eee.shape[0]
@@ -69,13 +81,69 @@ def mask_eee_loss(pred_mask_eee, true_positive_mask, true_negative_mask, false_p
 def mask_eee_inference(pred_instances, pred_mask_eee):
 
     # pred_mask = [N, 1, H, W]
-    pred_mask = torch.argmax(pred_mask_eee, dim=1, keepdim=True) # [N, 1, H, W]
-    pred_mask = torch.cat([pred_mask == i for i in range(4)], dim=1)[:, :3, :, :] 
+
+    # argmax version
+    # pred_mask = torch.argmax(pred_mask_eee, dim=1, keepdim=True) # [N, 1, H, W]
+    # pred_mask = torch.cat([pred_mask == i for i in range(4)], dim=1)[:, :3, :, :] 
+
+    # softmax version
+    pred_mask = torch.softmax(pred_mask_eee, dim=1)
+
+
     # ignore false negative
     num_boxes_per_image = [len(i) for i in pred_instances]
     pred_mask = pred_mask.split(num_boxes_per_image, dim=0)
-    for prob, instance in zip(pred_mask, pred_instances):
-        instance.set('pred_error', prob)
+    for pred_errors, instance in zip(pred_mask, pred_instances):
+        instance.set('pred_error', pred_errors)
+        initial_masks = instance.get('pred_masks') # [N, H, W]
+        n_mask = initial_masks.shape[0]
+
+        # refine mask
+        # refined_masks = []
+        # for idx in range(n_mask):
+        #     initial_mask = initial_masks[idx] # [1, H, W]
+        #     pred_error = pred_errors[idx] # [4, H, W]
+        #     filter_mask = (initial_mask > 0.5).to(dtype=torch.float) # [1, H, W]
+        #     true_positive_mask = pred_error[0, :, :] * filter_mask# [H, W]
+        #     true_negative_mask = pred_error[1, :, :] * (1 - filter_mask) # [H, W]
+        #     false_positive_mask = pred_error[2, :, :] * filter_mask # [H, W]
+        #     false_negative_mask = pred_error[3, :, :] * (1 - filter_mask) # [H, W]
+        #     refined_mask = \
+        #         initial_mask * true_positive_mask \
+        #             + initial_mask * (1 - true_negative_mask) \
+        #             + (1 - initial_mask) * false_positive_mask \
+        #             + (1 - initial_mask) * (1 - false_negative_mask)
+        #     # normalize to 0 ~ 1
+        #     refined_mask = (refined_mask - refined_mask.min()) / (refined_mask.max() - refined_mask.min())
+        #     refined_masks.append(refined_mask)
+        # instance.pred_masks = torch.stack(refined_masks, dim=0) # [N, H, W]
+
+
+        # import numpy as np
+        # import cv2
+        # for idx in range(n_mask):
+        #     initial_m = initial_masks[idx].detach().cpu().numpy() # [1, H, W]
+        #     initial_m = initial_m.transpose(1, 2, 0) * 255
+        #     initial_m = initial_m.astype(np.uint8)
+        #     initial_m = np.concatenate([initial_m, initial_m, initial_m], axis=2)
+        #     pred_m = pred_errors[idx][:3, :, :].detach().cpu().numpy().transpose(1, 2, 0) # [3, H, W] # 0: tp, 1: tn, 2: fp
+        #     pred_m = pred_m * 255
+        #     pred_m = pred_m.astype(np.uint8)
+        #     error_m = np.zeros([pred_m.shape[0], pred_m.shape[1], 3], dtype=np.uint8)
+        #     error_m[:, :, 0] = pred_m[:, :, 1] 
+        #     error_m[:, :, 1] = pred_m[:, :, 0] 
+        #     error_m[:, :, 2] = pred_m[:, :, 2] 
+
+        #     refined_m = refined_masks[idx].detach().cpu().numpy() # [1, H, W]
+        #     refined_m = refined_m.transpose(1, 2, 0) * 255
+        #     refined_m = refined_m.astype(np.uint8)
+        #     refined_m = np.concatenate([refined_m, refined_m, refined_m], axis=2)
+        #     cv2.imwrite('vis/pred_error_{}.png'.format(idx), np.hstack([initial_m, error_m, refined_m]))
+
+
+
+        
+
 
 
 @ROI_MASK_EEE_HEAD_REGISTRY.register()

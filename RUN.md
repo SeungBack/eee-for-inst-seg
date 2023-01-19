@@ -22,4 +22,10 @@ CUDA_VISIBLE_DEVICES=3 python train_net.py --config-file configs/COCO-InstanceSe
 CUDA_VISIBLE_DEVICES=5 python train_net.py --config-file configs/COCO-InstanceSegmentation/mask_eee_rcnn_R_50_FPN_1x_bs2_conv5.yaml
 
 
-CUDA_VISIBLE_DEVICES=7 python train_net.py --config-file configs/COCO-InstanceSegmentation/mask_scoring_rcnn_R_50_FPN_1x_bs2.yaml
+CUDA_VISIBLE_DEVICES=4 python train_net.py --config-file configs/COCO-InstanceSegmentation/mask_eee_rcnn_R_50_FPN_1x_bs2_conv3_dice.yaml
+
+CUDA_VISIBLE_DEVICES=5 python train_net.py --config-file configs/COCO-InstanceSegmentation/mask_eee_rcnn_R_50_FPN_1x_bs2_conv3_dicefocal.yaml
+
+CUDA_VISIBLE_DEVICES=6 python train_net.py --config-file configs/COCO-InstanceSegmentation/mask_eee_rcnn_R_50_FPN_1x_bs2_conv3_dicefocal_weight0.5.yaml
+
+CUDA_VISIBLE_DEVICES=7 python train_net.py --config-file configs/COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_1x_bs2.yaml

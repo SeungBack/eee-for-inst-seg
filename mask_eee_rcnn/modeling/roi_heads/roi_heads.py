@@ -474,6 +474,7 @@ class StandardROIHeads(ROIHeads):
         self._init_maskiou_head(cfg)
         self._init_mask_eee_head(cfg)
         self._init_keypoint_head(cfg)
+        self.use_all_pred = cfg.MODEL.ROI_MASK_EEE_HEAD.USE_ALL_PRED 
 
     def _init_box_head(self, cfg):
         # fmt: off
@@ -544,6 +545,7 @@ class StandardROIHeads(ROIHeads):
             return
 
         self.mask_eee_head = build_mask_eee_head(cfg, )
+        self.mask_eee_loss = cfg.MODEL.MASK_EEE_LOSS
         self.mask_eee_weight = cfg.MODEL.MASK_EEE_LOSS_WEIGHT
 
     def _init_keypoint_head(self, cfg):
@@ -706,10 +708,10 @@ class StandardROIHeads(ROIHeads):
                 loss, selected_mask, labels, maskiou_targets = mask_rcnn_loss(mask_logits, proposals, self.maskiou_on)
                 return {"loss_mask": loss}, mask_features, selected_mask, labels, maskiou_targets
             if self.mask_eee_on:
-                loss, selected_mask, tp_mask, tn_mask, fp_mask, fn_mask = mask_rcnn_loss(mask_logits, proposals, self.maskiou_on, self.mask_eee_on)
+                loss, selected_mask, tp_mask, tn_mask, fp_mask, fn_mask = mask_rcnn_loss(mask_logits, proposals, self.maskiou_on, self.mask_eee_on, self.use_all_pred)
                 return {"loss_mask": loss}, mask_features, selected_mask, tp_mask, tn_mask, fp_mask, fn_mask
             else:
-                return {"loss_mask": mask_rcnn_loss(mask_logits, proposals, self.maskiou_on)}, None, None, None, None
+                return {"loss_mask": mask_rcnn_loss(mask_logits, proposals, self.maskiou_on)}
 
         else:
             pred_boxes = [x.pred_boxes for x in instances]
@@ -760,7 +762,7 @@ class StandardROIHeads(ROIHeads):
 
         if self.training:
             pred_mask_eee = self.mask_eee_head(mask_features, selected_mask)
-            return mask_eee_loss(pred_mask_eee, true_positive_mask, true_negative_mask, false_positive_mask, false_negative_mask, self.mask_eee_weight)
+            return mask_eee_loss(pred_mask_eee, true_positive_mask, true_negative_mask, false_positive_mask, false_negative_mask, self.mask_eee_weight, self.mask_eee_loss)
         else:
             masks = torch.cat([i.pred_masks for i in instances], 0)
             if masks.shape[0] == 0:

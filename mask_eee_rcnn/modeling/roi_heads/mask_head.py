@@ -19,7 +19,7 @@ The registered object will be called with `obj(cfg, input_shape)`.
 """
 
 
-def mask_rcnn_loss(pred_mask_logits, instances, maskiou_on, mask_eee_on=False):
+def mask_rcnn_loss(pred_mask_logits, instances, maskiou_on, mask_eee_on=False, use_all_pred=False):
     """
     Compute the mask prediction loss defined in the Mask R-CNN paper.
 
@@ -167,6 +167,7 @@ def mask_rcnn_loss(pred_mask_logits, instances, maskiou_on, mask_eee_on=False):
         false_negative_mask = ~gt_masks_bool & ~pred_mask_bool
         mask_num, mask_h, mask_w = pred_mask_logits.shape
         selected_mask = pred_mask_logits.reshape(mask_num, 1, mask_h, mask_w)
+        selected_mask = selected_mask.sigmoid()
         return mask_loss, selected_mask, true_positive_mask, true_negative_mask, false_positive_mask, false_negative_mask
 
     else:
