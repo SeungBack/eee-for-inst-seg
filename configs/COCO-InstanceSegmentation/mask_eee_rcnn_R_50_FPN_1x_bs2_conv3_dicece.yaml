@@ -8,8 +8,7 @@ MODEL:
     NUM_CONV: 3
     CONV_DIM: 256
     
-  MASK_EEE_LOSS_WEIGHT: 0.1
-
+  MASK_EEE_LOSS: 'dice_ce'
 
 SOLVER:
   IMS_PER_BATCH: 2

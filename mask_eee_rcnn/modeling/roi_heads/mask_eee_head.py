@@ -46,6 +46,9 @@ def mask_eee_loss(pred_mask_eee, true_positive_mask, true_negative_mask, false_p
     elif loss_type == 'dice_focal':
         criterion = DiceFocalLoss(reduction='mean', softmax=True)
         loss = criterion(pred_mask_eee, gt_mask)
+    elif loss_type == 'dice_ce':
+        criterion = DiceCELoss(reduction='mean', softmax=True)
+        loss = criterion(pred_mask_eee, gt_mask)
     else:
         raise NotImplementedError
     
@@ -74,7 +77,6 @@ def mask_eee_loss(pred_mask_eee, true_positive_mask, true_negative_mask, false_p
     #     gt_vis[:, :, 2] = fp_mask[:, :, 0]
     #     cv2.imwrite('mask_{}.png'.format(idx), np.hstack([pred_vis, gt_vis]))
 
-    # return {'loss_mask_eee': loss * loss_weight}
     return {'loss_mask_eee': loss * loss_weight } 
 
 
@@ -154,10 +156,11 @@ class MaskEEEHead(nn.Module):
         input_channels = 257
         conv_dims  = cfg.MODEL.ROI_MASK_EEE_HEAD.CONV_DIM
         num_conv  = cfg.MODEL.ROI_MASK_EEE_HEAD.NUM_CONV
-        self.norm         = cfg.MODEL.ROI_MASK_EEE_HEAD.NORM
-        self.conv_norm_relus = []
-        self.maxpool_on = cfg.MODEL.ROI_MASK_EEE_HEAD.MAXPOOL_ON
 
+        self.pooler_resolution = cfg.MODEL.ROI_MASK_EEE_HEAD.POOLER_RESOLUTION
+        self.norm         = cfg.MODEL.ROI_MASK_EEE_HEAD.NORM
+
+        self.conv_norm_relus = []
         for k in range(num_conv):
             conv = Conv2d(
                 input_channels if k == 0 else conv_dims,
@@ -172,14 +175,16 @@ class MaskEEEHead(nn.Module):
             self.add_module("mask_eee_fcn{}".format(k + 1), conv)
             self.conv_norm_relus.append(conv)
 
-        self.deconv = ConvTranspose2d(
-            conv_dims if num_conv > 0 else input_channels,
-            conv_dims,
-            kernel_size=2,
-            stride=2,
-            padding=0,
-        )
-        self.add_module("mask_eee_deconv", self.deconv)
+        if self.pooler_resolution == 14:
+            self.deconv = ConvTranspose2d(
+                conv_dims if num_conv > 0 else input_channels,
+                conv_dims,
+                kernel_size=2,
+                stride=2,
+                padding=0,
+            )
+            self.add_module("mask_eee_deconv", self.deconv)
+
 
         self.predictor = Conv2d(
             conv_dims,
@@ -191,19 +196,24 @@ class MaskEEEHead(nn.Module):
         self.add_module("mask_eee_predictor", self.predictor)
 
         # init weights
-        for layer in self.conv_norm_relus + [self.deconv,]:
+        for layer in self.conv_norm_relus:
             weight_init.c2_msra_fill(layer)
         nn.init.normal_(self.predictor.weight, std=0.001)
         if self.predictor.bias is not None:
             nn.init.constant_(self.predictor.bias, 0)
+        if self.pooler_resolution == 14:
+            for layer in [self.deconv]:
+                weight_init.c2_msra_fill(layer)
 
     def forward(self, x, mask):
-        mask_pool = F.max_pool2d(mask, kernel_size=2, stride=2)
-        x = torch.cat((x, mask_pool), 1)
+        if self.pooler_resolution == 14:
+            mask = F.max_pool2d(mask, kernel_size=2, stride=2)
+        x = torch.cat((x, mask), 1)
         for layer in self.conv_norm_relus:
             x = layer(x)
-        x = F.relu(self.deconv(x))
-        return self.predictor(x)
+        if self.pooler_resolution == 14:
+            x = self.deconv(x)
+        return self.predictor(F.relu(x))
 
 
 def build_mask_eee_head(cfg):

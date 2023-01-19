@@ -39,9 +39,10 @@ _C.MODEL.ROI_MASK_EEE_HEAD.NAME = "MaskEEEHead"
 _C.MODEL.ROI_MASK_EEE_HEAD.NORM = ""
 _C.MODEL.ROI_MASK_EEE_HEAD.CONV_DIM = 256
 _C.MODEL.ROI_MASK_EEE_HEAD.NUM_CONV = 3
-_C.MODEL.ROI_MASK_EEE_HEAD.MAXPOOL_ON = False
-_C.MODEL.ROI_MASK_EEE_HEAD.USE_ALL_PRED = False
-
+_C.MODEL.ROI_MASK_EEE_HEAD.POOLER_RESOLUTION = 14
+_C.MODEL.ROI_MASK_EEE_HEAD.POOLER_SAMPLING_RATIO = 0
+_C.MODEL.ROI_MASK_EEE_HEAD.POOLER_TYPE = "ROIAlignV2"
+_C.MODEL.ROI_MASK_EEE_HEAD.IN_FEATURES = ["p2", "p3", "p4", "p5"]
 
 
 
@@ -581,7 +582,7 @@ _C.OUTPUT_DIR = "./output"
 # Set seed to negative to fully randomize everything.
 # Set seed to positive to use a fixed seed. Note that a fixed seed does not
 # guarantee fully deterministic behavior.
-_C.SEED = -1
+_C.SEED = 7
 # Benchmark different cudnn algorithms.
 # If input images have very different sizes, this option will have large overhead
 # for about 10k iterations. It usually hurts total time, but can benefit for certain models.

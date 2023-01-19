@@ -7,7 +7,7 @@ MODEL:
   ROI_MASK_EEE_HEAD:
     NUM_CONV: 3
     CONV_DIM: 256
-    MAXPOOL_ON: False
+    
   MASK_EEE_LOSS: 'dice_focal'
 
 

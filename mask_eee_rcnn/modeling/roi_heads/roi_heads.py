@@ -474,7 +474,6 @@ class StandardROIHeads(ROIHeads):
         self._init_maskiou_head(cfg)
         self._init_mask_eee_head(cfg)
         self._init_keypoint_head(cfg)
-        self.use_all_pred = cfg.MODEL.ROI_MASK_EEE_HEAD.USE_ALL_PRED 
 
     def _init_box_head(self, cfg):
         # fmt: off
@@ -548,6 +547,21 @@ class StandardROIHeads(ROIHeads):
         self.mask_eee_loss = cfg.MODEL.MASK_EEE_LOSS
         self.mask_eee_weight = cfg.MODEL.MASK_EEE_LOSS_WEIGHT
 
+        self.eee_in_features = cfg.MODEL.ROI_MASK_EEE_HEAD.IN_FEATURES
+        pooler_resolution = cfg.MODEL.ROI_MASK_EEE_HEAD.POOLER_RESOLUTION
+        pooler_scales     = tuple(1.0 / self.feature_strides[k] for k in self.eee_in_features)
+        sampling_ratio    = cfg.MODEL.ROI_MASK_EEE_HEAD.POOLER_SAMPLING_RATIO
+        pooler_type       = cfg.MODEL.ROI_MASK_EEE_HEAD.POOLER_TYPE
+        # fmt: on
+        in_channels = [self.feature_channels[f] for f in self.in_features][0]
+
+        self.mask_eee_pooler = ROIPooler(
+            output_size=pooler_resolution,
+            scales=pooler_scales,
+            sampling_ratio=sampling_ratio,
+            pooler_type=pooler_type,
+        )
+
     def _init_keypoint_head(self, cfg):
         # fmt: off
         self.keypoint_on                         = cfg.MODEL.KEYPOINT_ON
@@ -581,7 +595,8 @@ class StandardROIHeads(ROIHeads):
         if self.training:
             proposals = self.label_and_sample_proposals(proposals, targets)
         del targets
-
+        if self.mask_eee_on:
+                eee_features = [features[f] for f in self.eee_in_features]
         features_list = [features[f] for f in self.in_features]
 
         if self.training:
@@ -594,9 +609,9 @@ class StandardROIHeads(ROIHeads):
                 losses.update(loss)
                 losses.update(self._forward_maskiou(mask_features, proposals, selected_mask, labels, maskiou_targets))
             elif self.mask_eee_on:
-                loss, mask_features, selected_mask, tp_mask, tn_mask, fp_mask, fn_mask  = self._forward_mask(features_list, proposals)
+                loss, mask_eee_features, selected_mask, tp_mask, tn_mask, fp_mask, fn_mask = self._forward_mask(features_list, proposals, eee_features)
                 losses.update(loss)
-                losses.update(self._forward_mask_eee(mask_features, proposals, selected_mask, tp_mask, tn_mask, fp_mask, fn_mask))
+                losses.update(self._forward_mask_eee(mask_eee_features, proposals, selected_mask, tp_mask, tn_mask, fp_mask, fn_mask))
             else:
                 losses.update(self._forward_mask(features_list, proposals))
             
@@ -608,6 +623,8 @@ class StandardROIHeads(ROIHeads):
             # applied to the top scoring box detections.
             pred_instances = self.forward_with_given_boxes(features, pred_instances)
             return pred_instances, {}
+
+
     def forward_with_given_boxes(self, features, instances):
         """
         Use the given boxes in `instances` to produce other (non-box) per-ROI outputs.
@@ -628,6 +645,9 @@ class StandardROIHeads(ROIHeads):
         """
         assert not self.training
         assert instances[0].has("pred_boxes") and instances[0].has("pred_classes")
+
+        if self.mask_eee_on:
+            eee_features = [features[f] for f in self.eee_in_features]
         features = [features[f] for f in self.in_features]
 
         if self.maskiou_on:
@@ -635,7 +655,8 @@ class StandardROIHeads(ROIHeads):
             instances = self._forward_maskiou(mask_features, instances)
         elif self.mask_eee_on:
             instances, mask_features = self._forward_mask(features, instances)
-            instances = self._forward_mask_eee(mask_features, instances)
+            mask_eee_features = self.mask_eee_pooler(eee_features, [x.pred_boxes for x in instances])
+            instances = self._forward_mask_eee(mask_eee_features, instances)
         else:
             instances = self._forward_mask(features, instances)
         instances = self._forward_keypoint(features, instances)
@@ -681,7 +702,7 @@ class StandardROIHeads(ROIHeads):
             )
             return pred_instances
 
-    def _forward_mask(self, features, instances):
+    def _forward_mask(self, features, instances, eee_features=None):
         """
         Forward logic of the mask prediction branch.
 
@@ -708,8 +729,9 @@ class StandardROIHeads(ROIHeads):
                 loss, selected_mask, labels, maskiou_targets = mask_rcnn_loss(mask_logits, proposals, self.maskiou_on)
                 return {"loss_mask": loss}, mask_features, selected_mask, labels, maskiou_targets
             if self.mask_eee_on:
-                loss, selected_mask, tp_mask, tn_mask, fp_mask, fn_mask = mask_rcnn_loss(mask_logits, proposals, self.maskiou_on, self.mask_eee_on, self.use_all_pred)
-                return {"loss_mask": loss}, mask_features, selected_mask, tp_mask, tn_mask, fp_mask, fn_mask
+                mask_eee_features = self.mask_eee_pooler(eee_features, proposal_boxes)
+                loss, selected_mask, tp_mask, tn_mask, fp_mask, fn_mask = mask_rcnn_loss(mask_logits, proposals, self.maskiou_on, self.mask_eee_on,)
+                return {"loss_mask": loss}, mask_eee_features, selected_mask, tp_mask, tn_mask, fp_mask, fn_mask
             else:
                 return {"loss_mask": mask_rcnn_loss(mask_logits, proposals, self.maskiou_on)}
 
