@@ -4,11 +4,8 @@ MODEL:
   MASK_ON: True
   MASKIOU_ON: False
   MASK_EEE_ON: True
-  ROI_MASK_EEE_HEAD:
-    NUM_CONV: 3
-    CONV_DIM: 256
-    IN_FEATURES: ["p2"]
-  MASK_EEE_LOSS: 'dice'
+  ROI_MASK_HEAD:
+    MASK_EEE_ON: True
 
 SOLVER:
   IMS_PER_BATCH: 2

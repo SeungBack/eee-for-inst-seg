@@ -611,7 +611,7 @@ class StandardROIHeads(ROIHeads):
             elif self.mask_eee_on:
                 loss, mask_eee_features, selected_mask, tp_mask, tn_mask, fp_mask, fn_mask = self._forward_mask(features_list, proposals, eee_features)
                 losses.update(loss)
-                losses.update(self._forward_mask_eee(mask_eee_features, proposals, selected_mask, tp_mask, tn_mask, fp_mask, fn_mask))
+                # losses.update(self._forward_mask_eee(mask_eee_features, proposals, selected_mask, tp_mask, tn_mask, fp_mask, fn_mask))
             else:
                 losses.update(self._forward_mask(features_list, proposals))
             
@@ -654,9 +654,11 @@ class StandardROIHeads(ROIHeads):
             instances, mask_features = self._forward_mask(features, instances)
             instances = self._forward_maskiou(mask_features, instances)
         elif self.mask_eee_on:
-            instances, mask_features = self._forward_mask(features, instances)
-            mask_eee_features = self.mask_eee_pooler(eee_features, [x.pred_boxes for x in instances])
-            instances = self._forward_mask_eee(mask_eee_features, instances)
+            instances = self._forward_mask(features, instances)
+
+            # instances, mask_features = self._forward_mask(features, instances)
+            # mask_eee_features = self.mask_eee_pooler(eee_features, [x.pred_boxes for x in instances])
+            # instances = self._forward_mask_eee(mask_eee_features, instances)
         else:
             instances = self._forward_mask(features, instances)
         instances = self._forward_keypoint(features, instances)
@@ -724,24 +726,29 @@ class StandardROIHeads(ROIHeads):
             proposals, _ = select_foreground_proposals(instances, self.num_classes)
             proposal_boxes = [x.proposal_boxes for x in proposals]
             mask_features = self.mask_pooler(features, proposal_boxes)
-            mask_logits = self.mask_head(mask_features)
             if self.maskiou_on:
+                mask_logits = self.mask_head(mask_features)
                 loss, selected_mask, labels, maskiou_targets = mask_rcnn_loss(mask_logits, proposals, self.maskiou_on)
                 return {"loss_mask": loss}, mask_features, selected_mask, labels, maskiou_targets
             if self.mask_eee_on:
+                mask_logits, mask_eee_logits = self.mask_head(mask_features)
                 mask_eee_features = self.mask_eee_pooler(eee_features, proposal_boxes)
-                loss, selected_mask, tp_mask, tn_mask, fp_mask, fn_mask = mask_rcnn_loss(mask_logits, proposals, self.maskiou_on, self.mask_eee_on,)
-                return {"loss_mask": loss}, mask_eee_features, selected_mask, tp_mask, tn_mask, fp_mask, fn_mask
+                loss, mask_eee_loss, selected_mask, tp_mask, tn_mask, fp_mask, fn_mask = mask_rcnn_loss(mask_logits, proposals, self.maskiou_on, self.mask_eee_on, mask_eee_logits)
+                return {"loss_mask": loss, "loss_mask_eee": mask_eee_loss}, mask_eee_features, selected_mask, tp_mask, tn_mask, fp_mask, fn_mask
             else:
+                mask_logits = self.mask_head(mask_features)
                 return {"loss_mask": mask_rcnn_loss(mask_logits, proposals, self.maskiou_on)}
 
         else:
             pred_boxes = [x.pred_boxes for x in instances]
             mask_features = self.mask_pooler(features, pred_boxes)
-            mask_logits = self.mask_head(mask_features)
+            if self.mask_eee_on:
+                mask_logits, _ = self.mask_head(mask_features)
+            else:
+                mask_logits = self.mask_head(mask_features)
             mask_rcnn_inference(mask_logits, instances)
 
-            if self.maskiou_on or self.mask_eee_on:
+            if self.maskiou_on:
                 return instances, mask_features
             else:
                 return instances
@@ -784,7 +791,18 @@ class StandardROIHeads(ROIHeads):
 
         if self.training:
             pred_mask_eee = self.mask_eee_head(mask_features, selected_mask)
-            return mask_eee_loss(pred_mask_eee, true_positive_mask, true_negative_mask, false_positive_mask, false_negative_mask, self.mask_eee_weight, self.mask_eee_loss)
+
+            if 'true_consistency' in self.mask_eee_loss:
+                # compute consistency loss between mask_logits and pred_mask_eee (true_consistency)
+                pred_mask_eee_soft = torch.softmax(pred_mask_eee, dim=1)
+                # !TODO: Index should be changed 
+                tc_loss = torch.nn.functional.binary_cross_entropy(selected_mask, \
+                        pred_mask_eee_soft[:, 0:1, :, :] + pred_mask_eee_soft[:, 1:2, :, :], \
+                        reduction='mean') * 0.1
+                return {"loss_mask_eee": mask_eee_loss(pred_mask_eee, true_positive_mask, true_negative_mask, false_positive_mask, false_negative_mask, self.mask_eee_weight, self.mask_eee_loss)['loss_mask_eee'],
+                        "loss_mask_eee_tc": tc_loss}    
+            else:
+                return mask_eee_loss(pred_mask_eee, true_positive_mask, true_negative_mask, false_positive_mask, false_negative_mask, self.mask_eee_weight, self.mask_eee_loss)
         else:
             masks = torch.cat([i.pred_masks for i in instances], 0)
             if masks.shape[0] == 0:

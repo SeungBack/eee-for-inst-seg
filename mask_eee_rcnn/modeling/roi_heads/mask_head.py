@@ -9,6 +9,7 @@ from torch.nn import functional as F
 from mask_eee_rcnn.layers import Conv2d, ConvTranspose2d, ShapeSpec, cat, get_norm
 from mask_eee_rcnn.utils.events import get_event_storage
 from mask_eee_rcnn.utils.registry import Registry
+from monai.losses import *
 
 ROI_MASK_HEAD_REGISTRY = Registry("ROI_MASK_HEAD")
 ROI_MASK_HEAD_REGISTRY.__doc__ = """
@@ -18,8 +19,20 @@ per-region features.
 The registered object will be called with `obj(cfg, input_shape)`.
 """
 
+def gt_mask_to_boundary(gt_mask, device):
+    gt_mask = gt_mask.to(dtype=torch.float32)
+    laplacian_kernel = torch.tensor(
+        [-1, -1, -1, -1, 8, -1, -1, -1, -1],
+        dtype=torch.float32, device=device).reshape(1, 1, 3, 3).requires_grad_(False)
+    boundary_targets = F.conv2d(gt_mask.unsqueeze(1), laplacian_kernel, padding=1)
+    boundary_targets = boundary_targets.clamp(min=0)
+    boundary_targets[boundary_targets > 0.1] = 1
+    boundary_targets[boundary_targets <= 0.1] = 0
+    boundary_targets = boundary_targets.to(dtype=torch.bool)
+    boundary_targets = boundary_targets.squeeze(1)
+    return boundary_targets
 
-def mask_rcnn_loss(pred_mask_logits, instances, maskiou_on, mask_eee_on=False):
+def mask_rcnn_loss(pred_mask_logits, instances, maskiou_on, mask_eee_on=False, pred_mask_eee_logits=None):
     """
     Compute the mask prediction loss defined in the Mask R-CNN paper.
 
@@ -101,7 +114,7 @@ def mask_rcnn_loss(pred_mask_logits, instances, maskiou_on, mask_eee_on=False):
             false_positive_mask = ~gt_masks_bool & pred_mask_bool
             false_negative_mask = ~gt_masks_bool & ~pred_mask_bool
             selected_mask = pred_mask_logits.reshape(-1, 1, mask_side_len, mask_side_len)
-            return pred_mask_logits.sum() * 0, selected_mask, true_positive_mask, true_negative_mask, false_positive_mask, false_negative_mask
+            return pred_mask_logits.sum() * 0, pred_mask_eee_logits.sum() * 0, selected_mask, true_positive_mask, true_negative_mask, false_positive_mask, false_negative_mask
     
     gt_masks = cat(gt_masks, dim=0)
     if gt_masks.dtype == torch.bool:
@@ -160,15 +173,49 @@ def mask_rcnn_loss(pred_mask_logits, instances, maskiou_on, mask_eee_on=False):
         selected_mask = selected_mask.sigmoid()
         
         return mask_loss, selected_mask, gt_classes, maskiou_targets.detach()
+    
+    
     elif mask_eee_on:
+
+        # if 'boundary' in loss_type:
+        #     device = gt_masks_bool.device
+        #     gt_masks_bool = gt_mask_to_boundary(gt_masks_bool, device=device)
+        #     pred_mask_bool = gt_mask_to_boundary(pred_mask_bool, device=device)
+
         true_positive_mask = gt_masks_bool & pred_mask_bool
         true_negative_mask = gt_masks_bool & ~pred_mask_bool
         false_positive_mask = ~gt_masks_bool & pred_mask_bool
         false_negative_mask = ~gt_masks_bool & ~pred_mask_bool
+
+        # import numpy as np
+        # import cv2
+        # n_masks = false_negative_mask.shape[0]
+        # for idx in range(n_masks):
+        #     tp = true_positive_mask[idx].detach().cpu().numpy().astype(np.uint8) * 255
+        #     tn = true_negative_mask[idx].detach().cpu().numpy().astype(np.uint8) * 255
+        #     fp = false_positive_mask[idx].detach().cpu().numpy().astype(np.uint8) * 255
+
+        #     vis = np.zeros([tp.shape[0], tp.shape[1], 3])
+        #     vis[:, :, 0] = tn
+        #     vis[:, :, 1] = tp
+        #     vis[:, :, 2] = fp
+        #     vis = vis.astype(np.uint8)
+        #     cv2.imwrite('vis/{}_boundary_gt.png'.format(idx), vis)
+
+
         mask_num, mask_h, mask_w = pred_mask_logits.shape
         selected_mask = pred_mask_logits.reshape(mask_num, 1, mask_h, mask_w)
         selected_mask = selected_mask.sigmoid()
-        return mask_loss, selected_mask, true_positive_mask, true_negative_mask, false_positive_mask, false_negative_mask
+
+        gt_mask = torch.cat([
+                    true_positive_mask.unsqueeze(1),
+                    true_negative_mask.unsqueeze(1),
+                    false_positive_mask.unsqueeze(1),
+                    false_negative_mask.unsqueeze(1),
+                ], dim=1).to(dtype=torch.float) # [N, 4, H, W]
+        criterion = DiceLoss(reduction='mean', softmax=True)
+        mask_eee_loss = criterion(pred_mask_eee_logits, gt_mask)
+        return mask_loss, mask_eee_loss, selected_mask, true_positive_mask, true_negative_mask, false_positive_mask, false_negative_mask
 
     else:
         return mask_loss
@@ -237,6 +284,7 @@ class MaskRCNNConvUpsampleHead(nn.Module):
         num_conv          = cfg.MODEL.ROI_MASK_HEAD.NUM_CONV
         input_channels    = input_shape.channels
         cls_agnostic_mask = cfg.MODEL.ROI_MASK_HEAD.CLS_AGNOSTIC_MASK
+        self.mask_eee_on       = cfg.MODEL.ROI_MASK_HEAD.MASK_EEE_ON
         # fmt: on
 
         self.conv_norm_relus = []
@@ -273,11 +321,51 @@ class MaskRCNNConvUpsampleHead(nn.Module):
         if self.predictor.bias is not None:
             nn.init.constant_(self.predictor.bias, 0)
 
+        if self.mask_eee_on:
+            self.deconv_eee = ConvTranspose2d(
+                           conv_dims if num_conv > 0 else input_channels,
+            conv_dims,
+            kernel_size=2,
+            stride=2,
+            padding=0,
+            )
+            self.predictor_eee = Conv2d(conv_dims, 4, kernel_size=1, stride=1, padding=0)
+
+            self.conv_norm_relus_eee = []
+            for k in range(3):
+                conv = Conv2d(
+                    conv_dims + num_classes,
+                    conv_dims + num_classes if k != 2 else conv_dims,
+                    kernel_size=3,
+                    stride=1,
+                    padding=1,
+                    bias=not self.norm,
+                    norm=get_norm(self.norm, conv_dims),
+                    activation=F.relu,
+                )
+                self.add_module("mask_eee{}".format(k + 1), conv)
+                self.conv_norm_relus_eee.append(conv)
+
+            weight_init.c2_msra_fill(self.deconv_eee)
+            nn.init.normal_(self.predictor_eee.weight, std=0.001)
+            if self.predictor_eee.bias is not None:
+                nn.init.constant_(self.predictor_eee.bias, 0)
+
+
     def forward(self, x):
         for layer in self.conv_norm_relus:
             x = layer(x)
-        x = F.relu(self.deconv(x))
-        return self.predictor(x)
+        if self.mask_eee_on:
+            x_mask = F.relu(self.deconv(x))
+            mask_pred = self.predictor(x_mask)
+            x_eee = F.relu(self.deconv_eee(x))
+            x_eee = torch.cat([x_eee, mask_pred.sigmoid()], dim=1)
+            for layer in self.conv_norm_relus_eee:
+                x_eee = layer(x_eee)
+            return mask_pred, self.predictor_eee(x_eee)
+        else:
+            x = F.relu(self.deconv(x))
+            return self.predictor(x)
 
 
 def build_mask_head(cfg, input_shape):

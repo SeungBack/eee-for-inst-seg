@@ -45,7 +45,6 @@ _C.MODEL.ROI_MASK_EEE_HEAD.POOLER_TYPE = "ROIAlignV2"
 _C.MODEL.ROI_MASK_EEE_HEAD.IN_FEATURES = ["p2", "p3", "p4", "p5"]
 
 
-
 # Path (possibly with schema like catalog:// or detectron2://) to a checkpoint file
 # to be loaded to the model. You can find available models in the model zoo.
 _C.MODEL.WEIGHTS = ""
@@ -356,6 +355,7 @@ _C.MODEL.ROI_MASK_HEAD.NORM = ""
 _C.MODEL.ROI_MASK_HEAD.CLS_AGNOSTIC_MASK = False
 # Type of pooling operation applied to the incoming feature map for each RoI
 _C.MODEL.ROI_MASK_HEAD.POOLER_TYPE = "ROIAlignV2"
+_C.MODEL.ROI_MASK_HEAD.MASK_EEE_ON = False
 
 
 # ---------------------------------------------------------------------------- #

@@ -8,7 +8,7 @@ MODEL:
     NUM_CONV: 3
     CONV_DIM: 256
     IN_FEATURES: ["p2"]
-  MASK_EEE_LOSS: 'dice'
+  MASK_EEE_LOSS: 'true_consistency_dice'
 
 SOLVER:
   IMS_PER_BATCH: 2
